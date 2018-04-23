@@ -1,10 +1,17 @@
 import numpy as np
+import pprint
 from tools2 import *
 from prondict import prondict
 import matplotlib.pyplot as plt
 phoneHMMs = np.load('lab2_models.npz')['phoneHMMs'].item()
 from sklearn.mixture import log_multivariate_normal_density
+pp = pprint.PrettyPrinter(indent=4)
+pp = pprint.PrettyPrinter(width=41, compact=True)
+import warnings
+warnings.filterwarnings("ignore")
 def concatHMMs(hmmmodels, namelist):
+
+
     """ Concatenates HMM models in a left to right manner
 
     Args:
@@ -45,27 +52,68 @@ def concatHMMs(hmmmodels, namelist):
         cov=phoneHMMs[digit]['covars']
         #print(cov)
         #print("HEJ HEJ")
-        #print(mean)
+        # print(mean)
+        # print("")
         means[i:i+3,0:13]=mean
         covars[i:i+3,0:13]=cov
         i+=3
-    transmat[-1,-1]=1
+    transmat[-1,-1]=1.0
     startprobs=np.zeros(tsize)
-    startprobs[0]=1
-    print(covars)
-    print("HEJ HEK")
-    print(means)
+    startprobs[0]=1.0
+    # print(covars)
+    # print("HEJ HEK")
+    # print(means)
     combinedHMM={'covars':covars,'name':namelist[0],'transmat':transmat,'startprob':startprobs,'means':means}
     return combinedHMM
-a=concatHMMs(phoneHMMs,namelist=prondict['o'])
-example = np.load('lab2_example.npz')['example'].item()
-loglik=example['obsloglik']
-fakelog=log_multivariate_normal_density(example['lmfcc'],a['means'],a['covars'])
 
 
+def main():
 
+    a=concatHMMs(phoneHMMs,namelist=prondict['4'])
+    data = np.load('lab2_data.npz')['data'][10]
+    #loglik=example['obsloglik']
+    #print()
+    fakelog=log_multivariate_normal_density(data['lmfcc'],a['means'],a['covars'])
+    # plt.pcolormesh(example['lmfcc'])
+    # plt.show()
 
+    #4.1
+    # plt.pcolormesh(fakelog.transpose())
+    # plt.colorbar()
+    # plt.show()
 
+    #4.2
+    log_alpha = forward(fakelog, np.log(a['startprob']), np.log(a['transmat']))
+
+    #4.3
+    # x = viterbi(fakelog, np.log(a['startprob']), np.log(a['transmat']))
+    # print(x)
+
+    #4.4
+    log_beta = backward(fakelog, np.log(a['startprob']), np.log(a['transmat']))
+
+    #5.1
+    # print(log_alpha)
+    # print("------------------------------")
+    # print(log_beta)
+    log_gamma = statePosteriors(log_alpha, log_beta)
+
+    #5.2
+    mu, covar = updateMeanAndVar(data['lmfcc'],log_gamma)
+    #new_fake_log=log_multivariate_normal_density(data['lmfcc'],mu,covar)
+    new_fake_log = fakelog;
+
+    for x in range(1,10):
+
+        log_alpha = forward(new_fake_log, np.log(a['startprob']), np.log(a['transmat']))
+        log_beta = backward(new_fake_log, np.log(a['startprob']), np.log(a['transmat']))
+        log_gamma = statePosteriors(log_alpha, log_beta)
+        mu, covar = updateMeanAndVar(data['lmfcc'],log_gamma)
+        new_fake_log=log_multivariate_normal_density(data['lmfcc'],mu,covar)
+        print(new_fake_log[0,0])
+
+    print(new_fake_log)
+    print(fakelog)
 
 
 
@@ -93,7 +141,25 @@ def forward(log_emlik, log_startprob, log_transmat):
     Output:
         forward_prob: NxM array of forward log probabilities for each of the M states in the model
     """
+    alpha = np.zeros(log_emlik.shape)
 
+    alpha[0,:] = log_startprob[0:-1] + log_emlik[0,:]
+    #print(len(log_emlik))
+    sum_row = 0;
+    log_transmat = log_transmat[0:-1];
+
+    # for state in range(1,9):
+    #     alpha[1,:] = logsumexp(alpha[0,:] + log_transmat[:,state]) + log_emlik[1,state]
+
+    for frame in range(1,len(log_emlik)):
+        
+        for state in range(0,len(log_emlik[0])):
+
+            alpha[frame,state] = logsumexp(alpha[frame-1,:] + log_transmat[:,state]) + log_emlik[frame,state]
+        
+
+    # pp.pprint(alpha)
+    return alpha
 def backward(log_emlik, log_startprob, log_transmat):
     """Backward (beta) probabilities in log domain.
 
@@ -105,6 +171,25 @@ def backward(log_emlik, log_startprob, log_transmat):
     Output:
         backward_prob: NxM array of backward log probabilities for each of the M states in the model
     """
+
+    beta = np.zeros(log_emlik.shape)
+    n = len(log_emlik)-2
+    log_transmat = log_transmat[0:-1,0:-1];
+
+
+    # beta[69,0] = logsumexp(log_transmat[0,:] + log_emlik[70,:] + beta[70,:])
+
+    while n >= 0:
+        
+        for j in range(0,len(log_emlik[0])):
+
+            beta[n,j] = logsumexp(log_transmat[j,:] + log_emlik[n+1,:] + beta[n+1,:])
+
+        n = n -1
+    # pp.pprint(beta)
+
+    return beta
+
 
 def viterbi(log_emlik, log_startprob, log_transmat):
     """Viterbi path.
@@ -118,6 +203,24 @@ def viterbi(log_emlik, log_startprob, log_transmat):
         viterbi_loglik: log likelihood of the best path
         viterbi_path: best path
     """
+    vit = np.zeros(log_emlik.shape)
+
+
+    vit[0] = log_startprob[0:-1] + log_emlik[0,:]
+    log_transmat = log_transmat[0:-1];
+
+
+    for n in range(1,len(log_emlik)):
+        
+        for j in range(0,len(log_emlik[0])):
+
+            vit[n,j] = max(vit[n-1,:] + log_transmat[:,j]) + log_emlik[n,j]
+        
+
+    # pp.pprint(vit)
+    # pp.pprint(vit.argmax(1))
+    return (vit[-1,vit.argmax(1)[-1]], vit.argmax(1))
+
 
 def statePosteriors(log_alpha, log_beta):
     """State posterior (gamma) probabilities in log domain.
@@ -131,6 +234,17 @@ def statePosteriors(log_alpha, log_beta):
         log_gamma: NxM array of gamma probabilities for each of the M states in the model
     """
 
+    gamma = np.zeros(log_alpha.shape)
+
+    gamma = log_alpha + log_beta 
+
+    gamma = gamma - logsumexp(log_alpha[-1,:])
+    #gamma = np.exp(log_alpha) + np.exp(log_beta)
+    #print(gamma)
+
+    #pp.pprint(gamma)
+
+    return gamma
 def updateMeanAndVar(X, log_gamma):
     """ Update Gaussian parameters with diagonal covariance
 
@@ -146,7 +260,37 @@ def updateMeanAndVar(X, log_gamma):
          covars: MxD covariance (variance) vectors for each state
     """
 
+    gamma_shape = log_gamma.shape
+    x_shape = X.shape
+    gamma = np.exp(log_gamma);
 
-namelist=['sil', 'ow', 'sil']
+    mu = np.zeros([gamma_shape[1],x_shape[1]])
+    covar = np.zeros([gamma_shape[1],x_shape[1]])
+
+    for j in range(gamma_shape[1]):  #state
+        temp = 0;
+        for n in range(x_shape[0]):  #dim
+            temp = temp + gamma[n,j]*X[n,:]
+
+        mu[j,:] = temp/np.sum(gamma[:,j])
+
+    # print(mu)
+    # print(mu.shape)
+
+    for j in range(gamma_shape[1]):  #state
+        temp = 0;
+        for n in range(x_shape[0]):  #dim
+            temp = temp + gamma[n,j]*(X[n,:] - mu[j,:])*(X[n,:] - mu[j,:]).transpose()
+
+        covar[j,:] = temp/np.sum(gamma[:,j])
+    # print(covar)
+    # print(covar.shape)
+
+    return mu, covar
+
+#namelist=['sil', 'ow', 'sil']
+
+if __name__ == '__main__':
+    main()
 
 
