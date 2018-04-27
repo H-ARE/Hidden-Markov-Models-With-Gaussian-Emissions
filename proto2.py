@@ -72,8 +72,10 @@ def main():
     a=concatHMMs(phoneHMMs,namelist=prondict['4'])
     data = np.load('lab2_data.npz')['data'][10]
     #loglik=example['obsloglik']
-    #print()
-    fakelog=log_multivariate_normal_density(data['lmfcc'],a['means'],a['covars'])
+    #print(a['covars'])
+    
+
+    fakelog=log_multivariate_normal_density_diag(data['lmfcc'],a['means'],a['covars'])
     # plt.pcolormesh(example['lmfcc'])
     # plt.show()
 
@@ -82,12 +84,16 @@ def main():
     # plt.colorbar()
     # plt.show()
 
+
     #4.2
     log_alpha = forward(fakelog, np.log(a['startprob']), np.log(a['transmat']))
+    #show_utterance()
+    #print(log_alpha)
 
     #4.3
-    # x = viterbi(fakelog, np.log(a['startprob']), np.log(a['transmat']))
-    # print(x)
+    x = viterbi(fakelog, np.log(a['startprob']), np.log(a['transmat']))
+    print(x)
+    #show_utterance_vit()
 
     #4.4
     log_beta = backward(fakelog, np.log(a['startprob']), np.log(a['transmat']))
@@ -102,18 +108,35 @@ def main():
     mu, covar = updateMeanAndVar(data['lmfcc'],log_gamma)
     #new_fake_log=log_multivariate_normal_density(data['lmfcc'],mu,covar)
     new_fake_log = fakelog;
+    start = 0
 
-    for x in range(1,10):
 
+
+    for x in range(1,1):
         log_alpha = forward(new_fake_log, np.log(a['startprob']), np.log(a['transmat']))
         log_beta = backward(new_fake_log, np.log(a['startprob']), np.log(a['transmat']))
+        #print("before")
+        #print(new_fake_log[0,0])
+        #print(mu[1,:])
+        #print(np.exp(log_alpha).sum(1))
+        #print(np.exp(log_beta).sum(1))
         log_gamma = statePosteriors(log_alpha, log_beta)
+        #print(log_gamma)
+        #print(np.exp(log_gamma).sum(1))
+        #print("")
         mu, covar = updateMeanAndVar(data['lmfcc'],log_gamma)
-        new_fake_log=log_multivariate_normal_density(data['lmfcc'],mu,covar)
-        print(new_fake_log[0,0])
-
-    print(new_fake_log)
-    print(fakelog)
+        #covar = a['covars']
+        #mu = a['means'];
+        #print("mu " + str(mu))
+        #print("covar" + str(covar))
+        new_fake_log=log_multivariate_normal_density_diag(data['lmfcc'],mu,covar)
+        #print(new_fake_log[0,0])
+        v1,v2 = viterbi(new_fake_log, np.log(a['startprob']), np.log(a['transmat']))
+        #print("after")
+        print(v1)
+        #print(v1)
+    # print(new_fake_log)
+    # print(fakelog)
 
 
 
@@ -156,7 +179,7 @@ def forward(log_emlik, log_startprob, log_transmat):
         for state in range(0,len(log_emlik[0])):
 
             alpha[frame,state] = logsumexp(alpha[frame-1,:] + log_transmat[:,state]) + log_emlik[frame,state]
-        
+            #print(alpha[frame,state])
 
     # pp.pprint(alpha)
     return alpha
@@ -207,6 +230,8 @@ def viterbi(log_emlik, log_startprob, log_transmat):
 
 
     vit[0] = log_startprob[0:-1] + log_emlik[0,:]
+
+    print(log_startprob.shape)
     log_transmat = log_transmat[0:-1];
 
 
@@ -234,6 +259,20 @@ def statePosteriors(log_alpha, log_beta):
         log_gamma: NxM array of gamma probabilities for each of the M states in the model
     """
 
+
+    # log_alpha = np.where(np.isinf(log_alpha), 0, log_alpha)
+    # sum_alphas = np.sum(np.exp(log_alpha), axis=1)
+    # sum_alphas = np.reshape(sum_alphas, (sum_alphas.size, 1))
+    # log_gamma = log_alpha + log_beta - sum_alphas
+
+    # # test state probabilities in linear domain
+    # a = np.abs(log_gamma).astype(np.float128)  # convert to float128 to avoid overflow in exp
+    # linear_gamma = np.exp(a)
+    # sum_prob = np.sum(linear_gamma, axis=1)
+
+
+    # return log_gamma  
+    log_alpha = np.where(np.isinf(log_alpha), 0, log_alpha)
     gamma = np.zeros(log_alpha.shape)
 
     gamma = log_alpha + log_beta 
@@ -245,7 +284,7 @@ def statePosteriors(log_alpha, log_beta):
     #pp.pprint(gamma)
 
     return gamma
-def updateMeanAndVar(X, log_gamma):
+def updateMeanAndVar(X, log_gamma, variancefloor = 5.0):
     """ Update Gaussian parameters with diagonal covariance
 
     Args:
@@ -264,31 +303,133 @@ def updateMeanAndVar(X, log_gamma):
     x_shape = X.shape
     gamma = np.exp(log_gamma);
 
+
     mu = np.zeros([gamma_shape[1],x_shape[1]])
     covar = np.zeros([gamma_shape[1],x_shape[1]])
 
-    for j in range(gamma_shape[1]):  #state
-        temp = 0;
-        for n in range(x_shape[0]):  #dim
-            temp = temp + gamma[n,j]*X[n,:]
+    #print(gamma_shape)
+    #print(x_shape)
 
-        mu[j,:] = temp/np.sum(gamma[:,j])
+    top = gamma.transpose().dot(X)
+    bot = gamma.sum(0).reshape(-1,1)
+    mu = top/bot
 
-    # print(mu)
-    # print(mu.shape)
+    # for j in range(gamma_shape[1]):  #state
+    #     temp = 0;
+    #     for n in range(x_shape[0]):  #dim
+    #         temp = temp + gamma[n,j]*X[n,:] #1x13
 
-    for j in range(gamma_shape[1]):  #state
-        temp = 0;
-        for n in range(x_shape[0]):  #dim
-            temp = temp + gamma[n,j]*(X[n,:] - mu[j,:])*(X[n,:] - mu[j,:]).transpose()
+    #     mu[j,:] = temp/np.sum(gamma[:,j])
 
-        covar[j,:] = temp/np.sum(gamma[:,j])
-    # print(covar)
+
+    for j in range(gamma_shape[1]): #state
+        
+        for n in range(x_shape[1]): #feature
+            top = 0
+            den = 0
+            for t in range(x_shape[0]): #tidsteg
+
+                top = top + gamma[t,j]* (X[t,n] - mu[j,n])**2
+                den = den + gamma[t,j]
+            
+            #print(den)
+
+ 
+            covar[j,n] = top/den
+
+    covar = np.where(covar < variancefloor, variancefloor, covar)
+
+    #print(covar)
+    # # print(mu)
+    # # print(mu.shape)
+    # for i in range(gamma_shape[1]): 
+    #     dif = np.power(X - mu[i], 2)
+    #     covar[i] = np.dot(log_gamma[:, i].T, dif) / np.sum(log_gamma[:,j])
+
+    # for j in range(gamma_shape[1]):  #state
+    #     temp = 0;
+    #     for n in range(x_shape[0]):  #dim
+        
+    #         temp = temp + gamma[n,j] * np.outer((X[n,:] - mu[j,n]),(X[n,:] - mu[j,n]))
+    #         #print(np.diagonal(temp).shape)
+    #     print(temp)
+    #     covar[j,:] = np.diagonal(temp)/np.sum(gamma[:,j])
+
+
+    #print(X)
     # print(covar.shape)
+
 
     return mu, covar
 
 #namelist=['sil', 'ow', 'sil']
+
+def show_utterance():
+
+    #fake_log_mat = [[]]
+    alpha_mat = np.zeros([11,44])
+
+    a_list =[]
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['o']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['z']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['1']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['2']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['3']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['4']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['5']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['6']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['7']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['8']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['9']))
+    temp_a = 0
+    for a in a_list:
+        
+        for x in range(0,44):
+
+            data = np.load('lab2_data.npz')['data'][x]
+
+            fakelog=log_multivariate_normal_density_diag(data['lmfcc'],a['means'],a['covars'])
+            alpha_mat[temp_a][x] = forward(fakelog, np.log(a['startprob']), np.log(a['transmat'])).max(1)[-1]
+        temp_a += 1
+
+    print(np.argmax(alpha_mat,axis = 0))
+
+    plt.plot(np.argmax(alpha_mat,axis = 0))
+    plt.show()
+
+def show_utterance_vit():
+
+    #fake_log_mat = [[]]
+    vit_mat = np.zeros([11,44])
+
+    a_list =[]
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['o']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['z']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['1']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['2']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['3']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['4']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['5']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['6']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['7']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['8']))
+    a_list.append(concatHMMs(phoneHMMs,namelist=prondict['9']))
+    temp_a = 0
+    for a in a_list:
+        
+        for x in range(0,44):
+
+            data = np.load('lab2_data.npz')['data'][x]
+
+            fakelog=log_multivariate_normal_density_diag(data['lmfcc'],a['means'],a['covars'])
+            ran, vit_sq = viterbi(fakelog, np.log(a['startprob']), np.log(a['transmat']))
+            vit_mat[temp_a][x] = ran
+        temp_a += 1
+
+    print(np.argmax(vit_mat,axis = 0))
+
+    plt.plot(np.argmax(vit_mat,axis = 0))
+    plt.show()
 
 if __name__ == '__main__':
     main()
