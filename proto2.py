@@ -9,6 +9,7 @@ pp = pprint.PrettyPrinter(indent=4)
 pp = pprint.PrettyPrinter(width=41, compact=True)
 import warnings
 warnings.filterwarnings("ignore")
+np.longdouble
 def concatHMMs(hmmmodels, namelist):
 
 
@@ -69,14 +70,17 @@ def concatHMMs(hmmmodels, namelist):
 
 def main():
 
+    #3.2
+    #Data select 
     a=concatHMMs(phoneHMMs,namelist=prondict['4'])
     data = np.load('lab2_data.npz')['data'][10]
+    #data = np.load('lab2_example.npz')['example'].item()
     #loglik=example['obsloglik']
     #print(a['covars'])
     
 
     fakelog=log_multivariate_normal_density_diag(data['lmfcc'],a['means'],a['covars'])
-    # plt.pcolormesh(example['lmfcc'])
+    # plt.pcolormesh(data['lmfcc'].transpose())
     # plt.show()
 
     #4.1
@@ -88,11 +92,13 @@ def main():
     #4.2
     log_alpha = forward(fakelog, np.log(a['startprob']), np.log(a['transmat']))
     #show_utterance()
-    #print(log_alpha)
+    #print(logsumexp(log_alpha[-1]))
 
     #4.3
     x = viterbi(fakelog, np.log(a['startprob']), np.log(a['transmat']))
-    print(x)
+    # print(x)
+    # plt.plot(x[1])
+    # plt.show()
     #show_utterance_vit()
 
     #4.4
@@ -112,7 +118,7 @@ def main():
 
 
 
-    for x in range(1,1):
+    for x in range(1,50):
         log_alpha = forward(new_fake_log, np.log(a['startprob']), np.log(a['transmat']))
         log_beta = backward(new_fake_log, np.log(a['startprob']), np.log(a['transmat']))
         #print("before")
@@ -231,7 +237,7 @@ def viterbi(log_emlik, log_startprob, log_transmat):
 
     vit[0] = log_startprob[0:-1] + log_emlik[0,:]
 
-    print(log_startprob.shape)
+    #print(log_emlik.shape)
     log_transmat = log_transmat[0:-1];
 
 
@@ -284,7 +290,7 @@ def statePosteriors(log_alpha, log_beta):
     #pp.pprint(gamma)
 
     return gamma
-def updateMeanAndVar(X, log_gamma, variancefloor = 5.0):
+def updateMeanAndVar(X, log_gamma, variancefloor = 50.0):
     """ Update Gaussian parameters with diagonal covariance
 
     Args:
@@ -310,16 +316,13 @@ def updateMeanAndVar(X, log_gamma, variancefloor = 5.0):
     #print(gamma_shape)
     #print(x_shape)
 
-    top = gamma.transpose().dot(X)
-    bot = gamma.sum(0).reshape(-1,1)
-    mu = top/bot
 
-    # for j in range(gamma_shape[1]):  #state
-    #     temp = 0;
-    #     for n in range(x_shape[0]):  #dim
-    #         temp = temp + gamma[n,j]*X[n,:] #1x13
+    for j in range(gamma_shape[1]):  #state
+        temp = 0;
+        for n in range(x_shape[0]):  #dim
+            temp = temp + gamma[n,j]*X[n,:] #1x13
 
-    #     mu[j,:] = temp/np.sum(gamma[:,j])
+        mu[j,:] = temp/np.sum(gamma[:,j])
 
 
     for j in range(gamma_shape[1]): #state
@@ -338,27 +341,6 @@ def updateMeanAndVar(X, log_gamma, variancefloor = 5.0):
             covar[j,n] = top/den
 
     covar = np.where(covar < variancefloor, variancefloor, covar)
-
-    #print(covar)
-    # # print(mu)
-    # # print(mu.shape)
-    # for i in range(gamma_shape[1]): 
-    #     dif = np.power(X - mu[i], 2)
-    #     covar[i] = np.dot(log_gamma[:, i].T, dif) / np.sum(log_gamma[:,j])
-
-    # for j in range(gamma_shape[1]):  #state
-    #     temp = 0;
-    #     for n in range(x_shape[0]):  #dim
-        
-    #         temp = temp + gamma[n,j] * np.outer((X[n,:] - mu[j,n]),(X[n,:] - mu[j,n]))
-    #         #print(np.diagonal(temp).shape)
-    #     print(temp)
-    #     covar[j,:] = np.diagonal(temp)/np.sum(gamma[:,j])
-
-
-    #print(X)
-    # print(covar.shape)
-
 
     return mu, covar
 
@@ -389,7 +371,7 @@ def show_utterance():
             data = np.load('lab2_data.npz')['data'][x]
 
             fakelog=log_multivariate_normal_density_diag(data['lmfcc'],a['means'],a['covars'])
-            alpha_mat[temp_a][x] = forward(fakelog, np.log(a['startprob']), np.log(a['transmat'])).max(1)[-1]
+            alpha_mat[temp_a][x] = logsumexp(forward(fakelog, np.log(a['startprob']), np.log(a['transmat']))[-1])
         temp_a += 1
 
     print(np.argmax(alpha_mat,axis = 0))
